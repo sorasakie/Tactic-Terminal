@@ -1,7 +1,7 @@
 {
-    "name": "bad-apple-terminal",
+    "name": "tactic-terminal",
     "version": "1.0.0",
-    "description": "A nodejs script for playing BadApple in the terminal",
+    "description": "Renders any video as Braille characters with ANSI truecolor in the terminal",
     "main": "index.js",
     "scripts": {
         "extract": "node extractFrames",
@@ -13,9 +13,6 @@
     "author": "KineticTactic",
     "license": "MIT",
     "dependencies": {
-        "ffmpeg": "0.0.4",
-        "get-pixels": "^3.3.2",
-        "jimp": "^1.6.0",
-        "node-gameloop": "^0.1.4"
+        "get-pixels": "^3.3.2"
     }
 }
