@@ -1,12 +1,12 @@
 # Tactic-Terminal
 
-Tactic-Terminal converts any input video (`.mp4`/`.webm`/`.mkv` — anything FFmpeg reads) into Braille characters (U+2800 block, 2x4 pixels per cell) with ANSI truecolor, stores the frames as text in `data.txt`, and plays them back in your terminal. Original Bad Apple terminal demo: https://youtu.be/_JTHbbsSCZk
+Tactic-Terminal converts any input video (`.mp4`/`.webm`/`.mkv` — anything FFmpeg reads) into Braille characters (U+2800 block, 2x4 pixels per cell), black and white by default (optional color with `--color truecolor|256`), stores the frames as text in `data.txt`, and plays them back in your terminal. Original Bad Apple terminal demo: https://youtu.be/_JTHbbsSCZk
 
 ## Requirements
 
 - Node.js
 - FFmpeg installed and on PATH — the tool invokes `ffmpeg`, `ffprobe`, and (for audio) `ffplay`
-- A terminal that supports Unicode and truecolor (Windows Terminal on Windows 10/11 is recommended)
+- A terminal that supports Unicode (truecolor only needed for `--color truecolor`/`--color 256`; Windows Terminal on Windows 10/11 is recommended)
 
 ## Quick start
 
@@ -44,7 +44,7 @@ Re-playing needs no re-prepare unless you change the video or flags — `data.tx
 | `--rows <n>` | current terminal rows - 1 | Target height in cells. |
 | `--fps <n>` | min(source fps, 24) | Output frame rate. |
 | `--flat <n>` | `20` | Flat-block luminance threshold. |
-| `--color <truecolor\|256\|mono>` | `truecolor` | Color depth of the output. |
+| `--color <truecolor\|256\|mono>` | `mono` | Color depth of the output; default is black and white. |
 | `--mode <braille>` | `braille` | Conversion mode; only supported value. |
 | `--extract-audio` | off | Write `audio.mp3` next to the repo. |
 

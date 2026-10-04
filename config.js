@@ -3,7 +3,7 @@
 const DEFAULTS = {
     flat: 20,
     colorStep: 17,
-    colorMode: "truecolor",
+    colorMode: "mono",
     mode: "braille",
     fpsCap: 24,
     fallbackCols: 120,
