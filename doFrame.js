@@ -1,63 +1,157 @@
 const fs = require("fs");
 const getPixels = require("get-pixels");
-const { toFourDigits } = require("./utilities");
 
-let id;
-let startIndex;
-let endIndex;
+// Braille dot bit per (col, row) inside one 2x4 pixel cell.
+const DOT = [
+    [0x01, 0x02, 0x04, 0x40],
+    [0x08, 0x10, 0x20, 0x80],
+];
+const ALL = [0, 1, 2, 3, 4, 5, 6, 7];
 
-function doFrame(id, index = 1, end = NaN) {
-  let indexString = toFourDigits(index.toString());
-  let path = `frames/frame_${indexString}.png`;
+const quantize = (v, step) => Math.min(255, Math.max(0, Math.round(v / step) * step));
+const cubeLevel = (v) => Math.round((v / 255) * 5);
 
-  if (!isNaN(end) && index === end)
-    return process.exit();
-
-  getPixels(path, (err, pixels) => {
-      if (err)
-          return process.exit();
-
-      let string = "";
-
-      const symbols = "⠀⠃⠇⠏⠟⠿";
-
-      let widthCounter = 0;
-      for (let i = 0; i < pixels.data.length; i += 4) {
-          let value = (pixels.data[i] + pixels.data[i + 1] + pixels.data[i + 2]) / 3;
-          value = Math.max(pixels.data[i], pixels.data[i + 1], pixels.data[i + 2]);
-
-          // string += getCharacterForGrayScale(value) + getCharacterForGrayScale(value);
-          const index = Math.floor(value / (256 / 6));
-          string += symbols[index].repeat(2);
-
-          widthCounter++;
-          if (widthCounter === 120) {
-              widthCounter = 0;
-              string += "\n";
-          }
-      }
-      string += "\n";
-
-      // compress
-      const regexes = [/(⠀+)/g, /(⠃+)/g, /(⠇+)/g, /(⠏+)/g, /(⠟+)/g, /(⠿+)/g];
-      for (let i = 0; i < regexes.length; i++) {
-          const matches = string.match(regexes[i]) || [];
-          for (let match of matches) {
-              string = string.replace(match, symbols[i] + toFourDigits(match.length.toString()));
-          }
-      }
-
-      fs.writeFileSync(`./data/data_${id}.txt`, string, { flag: "a" }, (err) => {});
-
-      process.send("plus");
-
-      doFrame(id, index + 1, end);
-  });
+// kind: "38" = foreground, "48" = background. "" for mono.
+function sgr(kind, mode, rgb) {
+    if (mode === "truecolor") return `\x1b[${kind};2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
+    if (mode === "256")
+        return `\x1b[${kind};5;${16 + 36 * cubeLevel(rgb[0]) + 6 * cubeLevel(rgb[1]) + cubeLevel(rgb[2])}m`;
+    return "";
 }
 
-process.on('message', (msg) => {
-  id = msg.id;
-  startIndex = msg.index;
-  endIndex = msg.end;
-  doFrame(msg.id, msg.index, msg.end);
-});
+// Average RGB of the given pixel indices, quantized per channel.
+function avg(rgb, idxs, colorStep) {
+    let r = 0, g = 0, b = 0;
+    for (const i of idxs) {
+        r += rgb[i * 3];
+        g += rgb[i * 3 + 1];
+        b += rgb[i * 3 + 2];
+    }
+    const n = idxs.length;
+    return [quantize(r / n, colorStep), quantize(g / n, colorStep), quantize(b / n, colorStep)];
+}
+
+function renderFrame(pixels, config) {
+    const { cols, rows, flat, colorStep, colorMode } = config;
+    const w = pixels.shape[0];
+    const h = pixels.shape[1];
+    if (w < cols * 2 || h < rows * 4) {
+        console.error(`Frame too small: got ${w}x${h}px, need at least ${cols * 2}x${rows * 4}px`);
+        process.exit(1);
+    }
+
+    const s0 = pixels.stride[0], s1 = pixels.stride[1], s2 = pixels.stride[2];
+    const data = pixels.data;
+    const lines = [];
+
+    for (let cy = 0; cy < rows; cy++) {
+        let line = "";
+        let prevFg = "", prevBg = "";
+
+        for (let cx = 0; cx < cols; cx++) {
+            const rgb = [];
+            const lum = [];
+            let sumL = 0, minL = Infinity, maxL = -Infinity;
+
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 2; c++) {
+                    const o = (cx * 2 + c) * s0 + (cy * 4 + r) * s1;
+                    const R = data[o], G = data[o + s2], B = data[o + 2 * s2];
+                    const L = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+                    rgb.push(R, G, B);
+                    lum.push(L);
+                    sumL += L;
+                    if (L < minL) minL = L;
+                    if (L > maxL) maxL = L;
+                }
+            }
+
+            const isFlat = maxL - minL < flat;
+            const meanL = sumL / 8;
+
+            let char, fgRgb = null, bgRgb;
+            if (isFlat) {
+                char = 0x2800;
+                bgRgb = avg(rgb, ALL, colorStep);
+            } else {
+                const lit = [], unlit = [];
+                let mask = 0;
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 2; c++) {
+                        const i = r * 2 + c;
+                        if (lum[i] >= meanL) {
+                            lit.push(i);
+                            mask |= DOT[c][r];
+                        } else {
+                            unlit.push(i);
+                        }
+                    }
+                }
+                if (lit.length === 0 || unlit.length === 0) {
+                    // Degenerate (only reachable off the flat path): fall back to a flat block.
+                    char = 0x2800;
+                    bgRgb = avg(rgb, ALL, colorStep);
+                } else {
+                    char = 0x2800 + mask;
+                    fgRgb = avg(rgb, lit, colorStep);
+                    bgRgb = avg(rgb, unlit, colorStep);
+                }
+            }
+
+            const bgEsc = sgr("48", colorMode, bgRgb);
+            if (bgEsc !== prevBg) {
+                line += bgEsc;
+                prevBg = bgEsc;
+            }
+            if (fgRgb) {
+                const fgEsc = sgr("38", colorMode, fgRgb);
+                if (fgEsc !== prevFg) {
+                    line += fgEsc;
+                    prevFg = fgEsc;
+                }
+            }
+            line += String.fromCharCode(char);
+        }
+
+        lines.push(line + "\x1b[0m");
+    }
+
+    return lines.join("\n");
+}
+
+function run({ id, start, end, config }) {
+    const outPath = `./data/data_${id}.txt`;
+    fs.writeFileSync(outPath, "");
+
+    let i = start;
+    (function next() {
+        if (i > end) {
+            // Done: drop the IPC channel so this worker actually exits and
+            // build.js's exit handler can reach the merge step.
+            if (process.connected) process.disconnect();
+            return;
+        }
+        const index = i++;
+        const path = `frames/frame_${String(index).padStart(4, "0")}.png`;
+        getPixels(path, (err, pixels) => {
+            if (err) {
+                console.error(`Failed to read ${path}`);
+                console.error(err);
+                process.exit(1);
+            }
+            let frame;
+            try {
+                frame = renderFrame(pixels, config);
+            } catch (e) {
+                console.error(`Failed to render ${path}`);
+                console.error(e);
+                process.exit(1);
+            }
+            fs.appendFileSync(outPath, frame + "\n\n");
+            process.send("plus");
+            next();
+        });
+    })();
+}
+
+process.on("message", run);
