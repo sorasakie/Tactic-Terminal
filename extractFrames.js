@@ -155,7 +155,7 @@ async function main() {
     fs.rmSync("./frames", { recursive: true, force: true });
     fs.mkdirSync("./frames");
 
-    const vf = `scale=${pw}:${ph}:force_original_aspect_ratio=decrease,pad=${pw}:${ph}:(ow-iw)/2:(oh-ih)/2:color=black`;
+    const vf = `scale=${pw}:${ph}:flags=lanczos:force_original_aspect_ratio=decrease,unsharp=5:5:0.8:5:5:0.0,pad=${pw}:${ph}:(ow-iw)/2:(oh-ih)/2:color=black`;
     console.log("\nExtracting frames...");
     const ext = await run("ffmpeg", [
         "-y", "-i", video,
