@@ -1,7 +1,7 @@
 {
-    "name": "tactic-terminal",
+    "name": "vid2braille",
     "version": "1.0.0",
-    "description": "Renders any video as black-and-white Braille characters in the terminal (optional ANSI color)",
+    "description": "Convert any video to Braille text frames and play them in your terminal",
     "main": "index.js",
     "scripts": {
         "extract": "node extractFrames",

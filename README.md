@@ -1,6 +1,6 @@
-# Tactic-Terminal
+# vid2braille
 
-Tactic-Terminal converts any input video (`.mp4`/`.webm`/`.mkv` — anything FFmpeg reads) into Braille characters (U+2800 block, 2x4 pixels per cell), black and white by default (optional color with `--color truecolor|256`), stores the frames as text in `data.txt`, and plays them back in your terminal. Original Bad Apple terminal demo: https://youtu.be/_JTHbbsSCZk
+vid2braille converts any input video (`.mp4`/`.webm`/`.mkv` — anything FFmpeg reads) into Braille characters (U+2800 block, 2x4 pixels per cell), black and white by default (optional color with `--color truecolor|256`), stores the frames as text in `data.txt`, and plays them back in your terminal. Original Bad Apple terminal demo: https://youtu.be/_JTHbbsSCZk
 
 ## Requirements
 
