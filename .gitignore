@@ -126,5 +126,14 @@ dist
 
 # End of https://www.toptal.com/developers/gitignore/api/node,vscode
 
-data.txt
+# Generated video data
 frames/
+data/
+data.txt
+data.meta.json
+
+# Media
+*.webm
+*.mp4
+*.mkv
+*.mp3
