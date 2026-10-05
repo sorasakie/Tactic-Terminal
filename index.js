@@ -8,9 +8,11 @@ const ENTER = "\x1b[?1049h\x1b[?25l";
 const RESTORE = "\x1b[?2026l\x1b[0m\x1b[?25h\x1b[?1049l";
 
 const USAGE = [
-    "Usage: node index.js [--audio <file>] [--dump <file>]",
+    "Usage: node index.js [--audio <file>] [--no-audio] [--loops <n>] [--dump <file>]",
     "",
     "  --audio <file>  Play audio with ffplay while rendering",
+    "  --no-audio      Disable audio entirely",
+    "  --loops <n>     Play n times total, then exit (default 1)",
     "  --dump <file>   Write the first and last frame to <file> and exit",
 ].join("\n");
 
@@ -23,6 +25,12 @@ let restored = false;
 function restore() {
     if (restored) return;
     restored = true;
+    try {
+        process.stdin.setRawMode(false);
+    } catch (e) {}
+    try {
+        process.stdin.pause();
+    } catch (e) {}
     if (!drawMode) return; // never touched the terminal, nothing to undo
     try {
         process.stdout.write(RESTORE);
@@ -67,16 +75,29 @@ process.stdout.on("error", (err) => {
 // ---- CLI ----
 
 function parseArgs(argv) {
-    const opts = { audio: null, dump: null };
+    const opts = { audio: null, dump: null, noAudio: false, loops: 1 };
     for (let i = 0; i < argv.length; i++) {
         const flag = argv[i];
-        if (flag === "--audio" || flag === "--dump") {
+        if (flag === "--no-audio") {
+            opts.noAudio = true;
+            continue;
+        }
+        if (flag === "--audio" || flag === "--dump" || flag === "--loops") {
             const value = argv[++i];
             if (value === undefined) {
                 console.error(USAGE);
                 process.exit(1);
             }
-            opts[flag.slice(2)] = value;
+            if (flag === "--loops") {
+                const n = Number(value);
+                if (!Number.isInteger(n) || n < 1) {
+                    console.error("--loops must be a positive integer.");
+                    process.exit(1);
+                }
+                opts.loops = n;
+            } else {
+                opts[flag.slice(2)] = value;
+            }
         } else {
             console.error(USAGE);
             process.exit(1);
@@ -156,7 +177,7 @@ console.log(`Source     : ${meta.source}`);
 console.log(`Grid       : ${meta.cols}x${meta.rows}`);
 console.log(`FPS        : ${meta.fps}`);
 console.log(`Frames     : ${frames.length}`);
-console.log(`Color mode : ${meta.colorMode}`);
+console.log("Controls   : space pause · ←→ seek ±5s · ↑↓ volume · m mute · l loop · q quit");
 
 if (typeof process.stdout.columns === "number") {
     const curCols = process.stdout.columns;
@@ -173,13 +194,42 @@ if (typeof process.stdout.columns === "number") {
 
 // ---- audio ----
 
-if (opts.audio) {
-    audio = spawn("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", opts.audio], {
-        stdio: "ignore",
-    });
-    audio.on("error", () => {
-        console.error("ffplay not found - continuing without audio");
-        audio = null;
+let audioAvailable = true;
+const volumeStep = 10;
+let volume = 80;
+let muted = false;
+
+let audioFile = null;
+if (!opts.noAudio) {
+    if (opts.audio) audioFile = opts.audio;
+    else if (fs.existsSync("audio.mp3")) audioFile = "audio.mp3";
+}
+
+// ponytail: respawn-per-adjust (each pause/seek/volume change restarts ffplay at
+// -ss) is the ceiling here; gaps become noticeable -> upgrade to a real audio lib.
+function spawnAudio(posSec) {
+    if (!audioFile || !audioAvailable) return;
+    killAudio();
+    const proc = spawn(
+        "ffplay",
+        [
+            "-nodisp",
+            "-autoexit",
+            "-loglevel",
+            "quiet",
+            "-ss",
+            posSec.toFixed(3),
+            "-volume",
+            String(muted ? 0 : volume),
+            audioFile,
+        ],
+        { stdio: "ignore" }
+    );
+    audio = proc;
+    proc.on("error", () => {
+        if (audio === proc) audio = null;
+        if (audioAvailable) console.error("ffplay not found - continuing without audio");
+        audioAvailable = false;
     });
 }
 
@@ -188,19 +238,108 @@ if (opts.audio) {
 drawMode = true;
 process.stdout.write(ENTER);
 
-const t0 = Date.now();
+// ---- timeline state ----
+
+let t0 = Date.now(); // video timeline origin
+let paused = false;
+let pausedAt = null; // Date.now() snapshot when paused
+let loopsLeft = opts.loops; // from --loops, default 1
+let loopOn = false; // 'l' toggle, infinite, takes precedence while on
 let lastDrawnIndex = -1;
 
+function posMs() {
+    return paused ? pausedAt - t0 : Date.now() - t0;
+}
+
+function togglePause() {
+    if (paused) {
+        t0 = Date.now() - (pausedAt - t0); // resume: keep the timeline continuous
+        paused = false;
+        spawnAudio(posMs() / 1000);
+    } else {
+        paused = true;
+        pausedAt = Date.now();
+        killAudio();
+    }
+}
+
+function seek(deltaSec) {
+    const maxMs = ((frames.length - 1) * 1000) / fps;
+    const target = Math.min(Math.max(posMs() + deltaSec * 1000, 0), maxMs);
+    if (paused) pausedAt = t0 + target;
+    else t0 = Date.now() - target;
+    if (!paused && audioFile) spawnAudio(target / 1000);
+    // redraw happens naturally on the next tick (index changed)
+}
+
+function setVolume(next) {
+    volume = Math.min(Math.max(next, 0), 100);
+    if (!paused && audioFile) spawnAudio(posMs() / 1000); // paused: state only, respawn on resume
+}
+
+function toggleMute() {
+    muted = !muted;
+    if (!paused && audioFile) spawnAudio(posMs() / 1000);
+}
+
+function resetTimeline() {
+    t0 = Date.now();
+    if (paused) pausedAt = t0;
+    lastDrawnIndex = -1;
+}
+
+// ---- keyboard controls (raw mode only on a real TTY) ----
+
+if (process.stdin.isTTY) {
+    try {
+        process.stdin.setRawMode(true);
+    } catch (e) {}
+    process.stdin.resume();
+    process.stdin.on("data", (chunk) => {
+        const s = chunk.toString();
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (c === "\x1b" && s[i + 1] === "[") {
+                const dir = s[i + 2];
+                i += 2; // consume the whole arrow sequence as one key
+                if (dir === "D") seek(-5);
+                else if (dir === "C") seek(5);
+                else if (dir === "A") setVolume(volume + 10);
+                else if (dir === "B") setVolume(volume - 10);
+                continue;
+            }
+            if (c === "\x03" || c === "q") shutdown(0);
+            else if (c === " ") togglePause();
+            else if (c === "m") toggleMute();
+            else if (c === "l") loopOn = !loopOn;
+        }
+    });
+}
+
+// ---- tick: absolute-time index, deadline-based reschedule ----
+
 function tick() {
-    const index = Math.floor(((Date.now() - t0) / 1000) * fps);
+    let ms = posMs();
+    let index = Math.floor((ms / 1000) * fps);
     if (index >= frames.length) {
-        shutdown(0); // natural end: restore, kill audio, exit 0 cleanly
-        return;
+        if (loopOn || loopsLeft > 1) {
+            if (!loopOn) loopsLeft--;
+            resetTimeline();
+            ms = posMs();
+            index = 0;
+        } else {
+            shutdown(0); // natural end: restore, kill audio, exit 0 cleanly
+            return;
+        }
     }
     if (index !== lastDrawnIndex) {
         lastDrawnIndex = index;
         process.stdout.write("\x1b[?2026h\x1b[H" + decodeFrame(index) + "\x1b[?2026l");
     }
-    setTimeout(tick, 1000 / fps);
+    // deadline scheduling: lands exactly on the next frame boundary, no cumulative
+    // setTimeout drift; index stays absolute-time-based so a slow draw skips ahead.
+    const delay = paused ? 100 : Math.max(0, ((index + 1) * 1000) / fps - ms);
+    setTimeout(tick, delay);
 }
+spawnAudio(posMs() / 1000);
 tick();

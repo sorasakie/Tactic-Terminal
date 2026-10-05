@@ -1,12 +1,12 @@
 # vid2braille
 
-vid2braille converts any input video (`.mp4`/`.webm`/`.mkv` — anything FFmpeg reads) into Braille characters (U+2800 block, 2x4 pixels per cell), black and white by default (optional color with `--color truecolor|256`), stores the frames as text in `data.txt`, and plays them back in your terminal. Original Bad Apple terminal demo: https://youtu.be/_JTHbbsSCZk
+vid2braille converts any input video (`.mp4`/`.webm`/`.mkv` — anything FFmpeg reads) into Braille characters (U+2800 block, 2x4 pixels per cell), black and white, stores the frames as text in `data.txt`, and plays them back in your terminal. Original Bad Apple terminal demo: https://youtu.be/_JTHbbsSCZk
 
 ## Requirements
 
 - Node.js
 - FFmpeg installed and on PATH — the tool invokes `ffmpeg`, `ffprobe`, and (for audio) `ffplay`
-- A terminal that supports Unicode (truecolor only needed for `--color truecolor`/`--color 256`; Windows Terminal on Windows 10/11 is recommended)
+- A terminal that supports Unicode (Windows Terminal on Windows 10/11 is recommended)
 
 ## Quick start
 
@@ -28,11 +28,13 @@ npm start
 ```sh
 npm run prepare -- myvideo.webm
 npm run prepare -- video.webm --cols 160 --rows 45 --fps 24
-npm run prepare -- input.mkv --color 256 --extract-audio
-npm start -- --audio audio.mp3
+npm run prepare -- input.mkv --start 10 --end 20
+npm start -- --loops 3
 ```
 
 Re-playing needs no re-prepare unless you change the video or flags — `data.txt` persists until you run `npm run prepare` again.
+
+If the source has audio, `audio.mp3` is extracted automatically during prepare and played automatically during `npm start` (control it live with the keys below).
 
 ## Flags reference
 
@@ -43,10 +45,9 @@ Re-playing needs no re-prepare unless you change the video or flags — `data.tx
 | `--cols <n>` | current terminal width | Target width in cells. |
 | `--rows <n>` | current terminal rows - 1 | Target height in cells. |
 | `--fps <n>` | min(source fps, 24) | Output frame rate. |
-| `--flat <n>` | `20` | Flat-block luminance threshold. |
-| `--color <truecolor\|256\|mono>` | `mono` | Color depth of the output; default is black and white. |
+| `--start <sec>` | `0` | Segment start (fast seek). |
+| `--end <sec>` | source end | Segment end; combine with `--start` to extract a clip. |
 | `--mode <braille>` | `braille` | Conversion mode; only supported value. |
-| `--extract-audio` | off | Write `audio.mp3` next to the repo. |
 
 Source width/height/fps/duration are auto-detected with FFprobe. The aspect ratio is preserved with a centered letterbox/pillarbox (never stretched).
 
@@ -54,28 +55,30 @@ Source width/height/fps/duration are auto-detected with FFprobe. The aspect rati
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--audio <file>` | none | Start `ffplay -nodisp -autoexit -loglevel quiet` with the video; warns and continues if `ffplay` is missing. |
+| `--audio <file>` | `audio.mp3` (if present) | Audio file to play; overrides the auto-detected `audio.mp3`. |
+| `--no-audio` | off | Play without audio. |
+| `--loops <n>` | `1` | Play n times, then exit. |
 | `--dump <file>` | none | Debug: write the first and last frame to the file, then exit. |
 
 FPS and dimensions are read from `data.meta.json`, so playback always matches the conversion.
+
+Playback controls: `space` pause · `←`/`→` seek ±5s · `↑`/`↓` volume · `m` mute · `l` loop · `q` quit.
 
 ## Terminal & font notes
 
 - The font must render the Braille block cleanly. **Cascadia Mono** (bundled with Windows Terminal) is the safe choice.
 - Font size must be small enough that a full frame does not scroll the terminal.
-- Windows Terminal has truecolor on by default.
 - The terminal must be at least `COLS`x`ROWS` cells — the player checks and exits with a clear message if not. Resize the terminal or re-prepare with smaller `--cols`/`--rows`.
 
 ## data.txt size
 
-Size scales with `cols x rows x fps x color depth`. `npm run prepare` prints an estimate and warns above 500 MB. If it gets too big, lower `--cols`/`--rows`/`--fps` or use `--color 256` / `--color mono`.
+Size scales with `cols x rows x fps`. `npm run prepare` prints an estimate and warns above 500 MB. If it gets too big, lower `--cols`/`--rows`/`--fps`.
 
 `frames/`, `data/`, `data.txt`, `data.meta.json` and all media extensions are gitignored — never commit them.
 
 ## Troubleshooting
 
 - **Garbled characters / boxes instead of Braille dots** — the font lacks U+2800. Switch to Cascadia Mono.
-- **No colors** — the terminal is not in truecolor. Windows Terminal: Settings → Profiles → Advanced → Use 24-bit color.
 - **"Terminal too small"** — resize the terminal or re-prepare with smaller `--cols`/`--rows`.
 - **Prepare fails** — the full FFmpeg error is printed. Check that the input path exists and that `ffmpeg`/`ffprobe` are on PATH.
 - **"ffplay not found" warning** — audio is skipped, playback continues.
