@@ -35,7 +35,6 @@ async function probe(video) {
         "-print_format", "json",
         "-show_format",
         "-show_streams",
-        "-select_streams", "v:0",
         video
     ]);
     if (code !== 0) {
@@ -47,8 +46,10 @@ async function probe(video) {
     } catch (e) {
         fail("Could not parse ffprobe output:", e);
     }
-    const stream = (info.streams || [])[0];
+    const streams = info.streams || [];
+    const stream = streams.find((s) => s.codec_type === "video");
     if (!stream) fail(`No video stream found in ${video}`);
+    const hasAudio = streams.some((s) => s.codec_type === "audio");
 
     const srcW = stream.width;
     const srcH = stream.height;
@@ -66,7 +67,7 @@ async function probe(video) {
     const durationRaw = (info.format && info.format.duration) ?? stream.duration ?? null;
     const duration = Number.isFinite(Number(durationRaw)) && durationRaw !== null ? Number(durationRaw) : null;
 
-    return { srcW, srcH, fps, duration };
+    return { srcW, srcH, fps, duration, hasAudio };
 }
 
 function computeSize(srcW, srcH, flags) {
@@ -116,19 +117,25 @@ async function main() {
         fail(`Input video not found: ${path.resolve(video)}`);
     }
 
-    const { srcW, srcH, fps: srcFps, duration } = await probe(video);
+    const { srcW, srcH, fps: srcFps, duration, hasAudio } = await probe(video);
     const { cols, rows, pw, ph, usedFallback } = computeSize(srcW, srcH, flags);
 
     const fps = flags.fps ?? Math.min(srcFps, DEFAULTS.fpsCap);
-    const colorMode = flags.color ?? DEFAULTS.colorMode;
-    const flat = flags.flat ?? DEFAULTS.flat;
-    const colorStep = flags.colorStep ?? DEFAULTS.colorStep;
     const mode = flags.mode ?? DEFAULTS.mode;
 
-    const frameCount = duration !== null ? Math.ceil(duration * fps) : null;
-    const bytesPerCell = { truecolor: 24, 256: 14, mono: 4 }[colorMode] ?? 24;
+    const segStart = flags.start ?? 0;
+    const segEnd = flags.end;
+    const seekArgs = segStart > 0 ? ["-ss", String(segStart)] : [];
+    const durArgs = segEnd !== undefined ? ["-t", String(segEnd - segStart)] : [];
+
+    let estDuration = null;
+    if (duration !== null) {
+        const endCapped = segEnd !== undefined ? Math.min(duration, segEnd) : duration;
+        estDuration = Math.max(0, endCapped - segStart);
+    }
+    const frameCount = estDuration !== null ? Math.ceil(estDuration * fps) : null;
     const estBytes = frameCount !== null
-        ? frameCount * (rows * (cols * bytesPerCell + 1) + 2)
+        ? frameCount * (rows * (cols * 4 + 1) + 2)
         : null;
 
     console.log("=== Extraction parameters ===");
@@ -136,10 +143,15 @@ async function main() {
     console.log(`Source size  : ${srcW} x ${srcH}`);
     console.log(`Source fps   : ${srcFps.toFixed(3)}`);
     console.log(`Duration     : ${duration !== null ? duration.toFixed(2) + " s" : "unknown"}`);
+    if (flags.start !== undefined || flags.end !== undefined) {
+        const from = flags.start !== undefined ? `${segStart}s` : "starts";
+        const to = flags.end !== undefined ? `${segEnd}s` : "ends";
+        console.log(`Segment      : ${from} - ${to}`);
+    }
     console.log(`Grid         : ${cols} cols x ${rows} rows`);
     console.log(`FPS          : ${fps}`);
     console.log(`Pixel size   : ${pw} x ${ph}`);
-    console.log(`Color mode   : ${colorMode} (${mode})`);
+    console.log(`Mode         : ${mode}`);
     console.log(`Frames (est) : ${frameCount !== null ? frameCount : "unknown (no duration)"}`);
     if (estBytes !== null) {
         console.log(`data.txt est.: ${formatBytes(estBytes)}`);
@@ -158,7 +170,7 @@ async function main() {
     const vf = `scale=${pw}:${ph}:flags=lanczos:force_original_aspect_ratio=decrease,unsharp=5:5:0.8:5:5:0.0,pad=${pw}:${ph}:(ow-iw)/2:(oh-ih)/2:color=black`;
     console.log("\nExtracting frames...");
     const ext = await run("ffmpeg", [
-        "-y", "-i", video,
+        "-y", ...seekArgs, "-i", video, ...durArgs,
         "-vf", vf,
         "-r", String(fps),
         "frames/frame_%04d.png"
@@ -178,17 +190,17 @@ async function main() {
     const actualFrames = pngs.length;
     console.log(`Extracted ${actualFrames} frames.`);
 
-    if (flags.extractAudio) {
+    fs.rmSync("audio.mp3", { force: true });
+    if (hasAudio) {
         console.log("Extracting audio...");
-        const aud = await run("ffmpeg", ["-y", "-i", video, "-vn", "audio.mp3"]);
+        const aud = await run("ffmpeg", ["-y", ...seekArgs, "-i", video, ...durArgs, "-vn", "audio.mp3"]);
         if (aud.code !== 0) {
-            console.error("FFmpeg audio extraction failed.");
-            console.error(`Exit code: ${aud.code}  Signal: ${aud.signal}`);
-            console.error("Full stderr:");
-            console.error(aud.stderr);
-            process.exit(1);
+            console.warn(`Audio extraction failed - continuing without audio. (exit code ${aud.code})`);
+        } else {
+            console.log("Wrote audio.mp3.");
         }
-        console.log("Wrote audio.mp3.");
+    } else {
+        console.log("No audio stream - skipping audio.");
     }
 
     const meta = {
@@ -197,9 +209,6 @@ async function main() {
         fps,
         frameCount: actualFrames,
         source: path.basename(video),
-        colorMode,
-        flat,
-        colorStep,
         mode,
         pixelWidth: pw,
         pixelHeight: ph
@@ -207,7 +216,7 @@ async function main() {
     fs.writeFileSync("data.meta.json", JSON.stringify(meta, null, 2) + "\n");
 
     console.log("\nDone.");
-    console.log(`  ${cols}x${rows} grid, ${actualFrames} frames @ ${fps} fps, ${colorMode}`);
+    console.log(`  ${cols}x${rows} grid, ${actualFrames} frames @ ${fps} fps, ${mode}`);
     console.log("  Next: npm run build (data.meta.json written).");
 }
 

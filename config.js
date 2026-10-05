@@ -1,17 +1,13 @@
 "use strict";
 
 const DEFAULTS = {
-    flat: 20,
-    colorStep: 17,
-    colorMode: "mono",
     mode: "braille",
     fpsCap: 24,
     fallbackCols: 120,
     fallbackRows: 40
 };
 
-const VALID_FLAGS = ["--cols", "--rows", "--fps", "--flat", "--color", "--mode", "--extract-audio"];
-const COLOR_MODES = ["truecolor", "256", "mono"];
+const VALID_FLAGS = ["--cols", "--rows", "--fps", "--mode", "--start", "--end"];
 const MODES = ["braille"];
 
 function die(msg) {
@@ -42,11 +38,6 @@ function parseArgs(argv) {
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
 
-        if (arg === "--extract-audio") {
-            flags.extractAudio = true;
-            continue;
-        }
-
         if (arg.startsWith("--")) {
             if (!VALID_FLAGS.includes(arg)) {
                 die(`Unknown flag: ${arg}\nValid flags: ${VALID_FLAGS.join(", ")}`);
@@ -59,13 +50,8 @@ function parseArgs(argv) {
                 case "--cols": flags.cols = intFlag(arg, raw); break;
                 case "--rows": flags.rows = intFlag(arg, raw); break;
                 case "--fps": flags.fps = numFlag(arg, raw); break;
-                case "--flat": flags.flat = intFlag(arg, raw); break;
-                case "--color":
-                    if (!COLOR_MODES.includes(raw)) {
-                        die(`Invalid value for --color: "${raw}" (expected ${COLOR_MODES.join("|")})`);
-                    }
-                    flags.color = raw;
-                    break;
+                case "--start": flags.start = numFlag(arg, raw); break;
+                case "--end": flags.end = numFlag(arg, raw); break;
                 case "--mode":
                     if (!MODES.includes(raw)) {
                         die(`Invalid value for --mode: "${raw}" (expected ${MODES.join("|")})`);
@@ -77,6 +63,10 @@ function parseArgs(argv) {
         }
 
         if (video === null) video = arg;
+    }
+
+    if (flags.start !== undefined && flags.end !== undefined && flags.end <= flags.start) {
+        die("Invalid range: --end must be greater than --start");
     }
 
     return { video, flags };
