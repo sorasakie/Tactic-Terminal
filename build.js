@@ -41,9 +41,6 @@ const build = () => {
     const config = {
         cols: meta.cols,
         rows: meta.rows,
-        flat: meta.flat,
-        colorStep: meta.colorStep,
-        colorMode: meta.colorMode,
     };
     for (const k of Object.keys(config)) {
         if (config[k] === undefined || config[k] === null) {
