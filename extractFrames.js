@@ -120,7 +120,7 @@ async function main() {
     const { srcW, srcH, fps: srcFps, duration, hasAudio } = await probe(video);
     const { cols, rows, pw, ph, usedFallback } = computeSize(srcW, srcH, flags);
 
-    const fps = flags.fps ?? Math.min(srcFps, DEFAULTS.fpsCap);
+    const fps = flags.fps ?? srcFps; // default follows source fps; --fps overrides
     const mode = flags.mode ?? DEFAULTS.mode;
 
     const segStart = flags.start ?? 0;

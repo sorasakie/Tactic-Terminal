@@ -2,7 +2,6 @@
 
 const DEFAULTS = {
     mode: "braille",
-    fpsCap: 24,
     fallbackCols: 120,
     fallbackRows: 40
 };

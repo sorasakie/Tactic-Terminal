@@ -44,7 +44,7 @@ If the source has audio, `audio.mp3` is extracted automatically during prepare a
 |------|---------|---------|
 | `--cols <n>` | current terminal width | Target width in cells. |
 | `--rows <n>` | current terminal rows - 1 | Target height in cells. |
-| `--fps <n>` | min(source fps, 24) | Output frame rate. |
+| `--fps <n>` | source fps | Output frame rate; defaults to the detected input fps. |
 | `--start <sec>` | `0` | Segment start (fast seek). |
 | `--end <sec>` | source end | Segment end; combine with `--start` to extract a clip. |
 | `--mode <braille>` | `braille` | Conversion mode; only supported value. |
